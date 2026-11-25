@@ -47,8 +47,11 @@ header b{letter-spacing:.2em;color:var(--am)}header .sp{flex:1}
 
 .k-read,.f-read,#lcdParams span,.mono,.rec-time b,#npTime{direction:ltr;unicode-bidi:isolate}header{flex-wrap:wrap}header small{max-width:260px}
 @media (max-width:620px){#console{grid-template-columns:minmax(0,1fr)}.strips{grid-template-columns:repeat(2,minmax(0,1fr))}.pads{grid-template-columns:repeat(3,1fr)}.panel{min-width:0}.meter.h{width:90px}.mbox{padding:10px}}
+
+#micBanner{background:#5a1612;color:#ffd9d6;padding:10px 14px;font-weight:600;line-height:1.5}
 </style></head><body>
 <header><b>MADDAH</b><small data-i18n="brandSub"></small><span class="lamp" id="stEngine" data-i18n="engine"></span><span class="lamp" id="stMic" data-i18n="mic"></span><span class="lamp rec" id="stRec" data-i18n="rec"></span><span class="lamp rec" id="miniClip" data-i18n="clip"></span><span class="sp"></span><span id="micMsg" class="lab"></span><button class="btn" id="settingsBtn" data-i18n="settings"></button><button class="btn" id="helpBtn" data-i18n="help"></button><button class="btn" id="lang">EN / فا</button></header>
+<div id="micBanner" hidden></div>
 <nav id="modeBar" class="modebar"></nav>
 <main id="console"></main>
 <div id="splash"><h1 data-i18n="splashTitle"></h1><p data-i18n="splashText" style="max-width:480px"></p><p id="secWarn" hidden data-i18n="splashSecure" style="max-width:480px;color:var(--rd)"></p><button id="power" data-i18n="power"></button></div>
@@ -577,6 +580,10 @@ qWarnHot|Peaks are very close to 0 dBFS.|پیک‌ها بسیار نزدیک ب�
 qWarnQuiet|Recording is very quiet – raise the input gain next time.|ضبط بسیار آرام است – دفعه بعد گین ورودی را بالا ببرید.
 qWarnNoise|Noise floor is high – use noise reduction, a quieter room or a closer microphone.|کف نویز بالاست – از کاهش نویز، اتاق ساکت‌تر یا میکروفون نزدیک‌تر استفاده کنید.
 qGood|Level and noise floor look healthy.|سطح و کف نویز مناسب به نظر می‌رسند.
+pvBoost|Boost quiet recordings for listening|تقویت صدای ضبط‌های آرام برای شنیدن
+qSilent|The recording is pure digital silence: no microphone signal reached the recorder. Check the MIC lamp, microphone permission and that this page is opened over HTTPS or localhost (see Help).|ضبط سکوت کامل دیجیتال است: هیچ سیگنالی از میکروفون به ضبط‌کننده نرسیده. چراغ MIC، اجازه‌ی میکروفون و اینکه صفحه با HTTPS یا localhost باز شده باشد را بررسی کنید (راهنما).
+recNoMic|Recording was NOT started: the microphone is not live. Fix the microphone first (permission, HTTPS/localhost, input device).|ضبط شروع نشد: میکروفون فعال نیست. ابتدا میکروفون را درست کنید (اجازه‌ی دسترسی، HTTPS/localhost، دستگاه ورودی).
+bannerMic|MICROPHONE IS NOT ACTIVE|میکروفون فعال نیست
 backMixer|BACK TO MIXER|بازگشت به میکسر
 recAgain|RECORD AGAIN|ضبط دوباره
 exportBtn|EXPORT AUDIO…|خروجی گرفتن…
@@ -963,13 +970,13 @@ const EQ_FREQS=[63,125,250,500,1000,2000,4000,6300,12000];
 const HUM_N=3;
 
 /* Chrome/Blink DynamicsCompressor adds an automatic make-up gain; remove it so the user's MAKEUP knob is the only make-up */
-function blinkMakeupDb(thr,ratio){return thr>=0||ratio<=1?0:-0.6*thr*(1-1/ratio);}
+function blinkMakeupDb(thr,ratio,knee){if(thr>=0||ratio<=1)return 0;const te=Math.min(0,thr+0.46*(knee||0));return -0.6*te*(1-1/ratio);}
 function setComp(node,mk,o){
   const c=E.ctx,now=c.currentTime,on=o.on!==false;
   const thr=on?o.thr:0,ratio=on?o.ratio:1,knee=on?(o.knee??6):0;
   node.threshold.setTargetAtTime(thr,now,.02);node.ratio.setTargetAtTime(ratio,now,.02);node.knee.setTargetAtTime(knee,now,.02);
   node.attack.setTargetAtTime(Math.max(.0005,(o.att??10)/1000),now,.02);node.release.setTargetAtTime(Math.max(.01,(o.rel??150)/1000),now,.02);
-  mk.gain.setTargetAtTime(dbToLin((on?(o.makeup||0):0)-blinkMakeupDb(thr,ratio)),now,.03);
+  mk.gain.setTargetAtTime(dbToLin((on?(o.makeup||0):0)-blinkMakeupDb(thr,ratio,knee)),now,.03);
 }
 const sm=(p,v,tc=.02)=>p.setTargetAtTime(v,E.ctx.currentTime,tc);
 function chain(...ns){for(let i=0;i<ns.length-1;i++)ns[i].connect(ns[i+1]);return ns[ns.length-1];}
@@ -1712,6 +1719,7 @@ const REC={
   async start(){
     await engineStart();
     if(!E.wk){toast('AudioWorklet required for recording','err');return;}
+    if(S.rec.src!=='master'||!LIB.playing){if(!E.streams.ch1){const m=!window.isSecureContext||!navigator.mediaDevices?t('micNoApi'):(INPUT_STATUS.ch1&&INPUT_STATUS.ch1.msg)||t('recNoMic');toast(t('recNoMic'),'err');alert(t('recNoMic')+'\n\n'+m);return;}}
     this.tr={};this.nodes=[];
     for(const c of this.tracksCfg()){
       const n=new AudioWorkletNode(E.ctx,'mx-rec',{processorOptions:{ch:c.ch},numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[c.ch],channelCount:c.ch,channelCountMode:'explicit'});
@@ -1787,7 +1795,7 @@ function analyze(chs,sr){
 }
 function qualityHtml(a){
   const row=(l,v,w)=>`<div class="qrow ${w?'warn':''}"><span>${t(l)}</span><b>${v}</b></div>`;
-  let msg=[];if(a.clip>0)msg.push(t('qWarnClip'));else if(a.peak>-0.5)msg.push(t('qWarnHot'));if(a.peak<-30)msg.push(t('qWarnQuiet'));if(a.noise>-45&&a.rms>-60)msg.push(t('qWarnNoise'));
+  let msg=[];if(a.peak<-100)msg.push(t('qSilent'));else if(a.clip>0)msg.push(t('qWarnClip'));else if(a.peak>-0.5)msg.push(t('qWarnHot'));if(a.peak<-30&&a.peak>=-100)msg.push(t('qWarnQuiet'));if(a.peak>=-100&&a.noise>-45&&a.rms>-60)msg.push(t('qWarnNoise'));
   return row('qDur',fmtClock(a.dur))+row('qPeak',a.peak.toFixed(1)+' dBFS',a.peak>-0.5)+row('qRms',a.rms.toFixed(1)+' dBFS')+row('qLufs',a.lufs.toFixed(1)+' LUFS')+row('qNoise',a.noise.toFixed(1)+' dBFS',a.noise>-45)+row('qClip',a.clip,a.clip>0)+row('qDc',a.dc.toFixed(0)+' dB')
    +`<p class="qmsg ${msg.length?'warn':'ok'}">${msg.length?msg.join(' '):t('qGood')}</p>`;
 }
@@ -1802,7 +1810,8 @@ const PV={take:null,key:'final',src:null,pos:0,t0:0,playing:false,trim:[0,0],raf
     openModal('mPreview');this.select(this.key);
   },
   select(k){const was=this.playing,p=this.curPos();this.stopSrc();this.key=k;$$('#pvTabs button').forEach(b=>b.classList.toggle('on',b.dataset.k===k));this.pos=p;this.calcPeaks();this.draw();this.qc();if(was)this.play();},
-  qc(){const b=this.data(),a=[];for(let c=0;c<b.numberOfChannels;c++)a.push(b.getChannelData(c).subarray(Math.floor(this.trim[0]*b.sampleRate),Math.floor(this.trim[1]*b.sampleRate)));$('#pvQC').innerHTML=qualityHtml(analyze(a,b.sampleRate));},
+  qc(){const b=this.data(),a=[];for(let c=0;c<b.numberOfChannels;c++)a.push(b.getChannelData(c).subarray(Math.floor(this.trim[0]*b.sampleRate),Math.floor(this.trim[1]*b.sampleRate)));const an_=analyze(a,b.sampleRate);$('#pvQC').innerHTML=qualityHtml(an_);this.peakDb=an_.peak;this.setGain();},
+  setGain(){const on=$('#pvBoost').checked,pk=this.peakDb;const boost=on&&isFinite(pk)&&pk<-6&&pk>-90?Math.min(dbToLin(-3-pk),30):1;E.previewGain.gain.value=(+$('#pvVol').value)*boost;$('#pvBoostInfo').textContent=boost>1.05?'+'+linToDb(boost).toFixed(0)+' dB':'';},
   calcPeaks(){const b=this.data(),W=1200,n=b.length,per=n/W,d=b.getChannelData(0),p=new Float32Array(W*2);
     for(let x=0;x<W;x++){let mn=0,mx=0;const s=Math.floor(x*per),e=Math.min(n,Math.floor((x+1)*per));for(let i=s;i<e;i+=Math.max(1,(e-s)>>6)){const v=d[i];if(v<mn)mn=v;if(v>mx)mx=v;}p[x*2]=mn;p[x*2+1]=mx;}this.peaks=p;},
   draw(){
@@ -1953,7 +1962,7 @@ function previewMarkup(){
   <div class="tabs" id="pvTabs"><button id="pvT_orig" data-k="orig" data-i18n="tOriginal">${t('tOriginal')}</button><button id="pvT_proc" data-k="proc" data-i18n="tProcessed">${t('tProcessed')}</button><button id="pvT_final" data-k="final"></button></div>
   <canvas id="pvWave"></canvas><div class="row"><span id="pvTime" class="mono"></span></div>
   <div class="row"><button class="btn" id="pvRestart">⏮ ${L('restart')}</button><button class="btn" id="pvRew">${L('rew')}</button><button class="btn" id="pvPlay">▶ ${L('play')}</button><button class="btn" id="pvPause">❚❚</button><button class="btn" id="pvStop">■</button><button class="btn" id="pvFf">${L('ff')}</button>
-  <label class="lab">${L('volume')} <input type="range" id="pvVol" min="0" max="1" step=".01" value="1"></label></div>
+  <label class="lab">${L('volume')} <input type="range" id="pvVol" min="0" max="1" step=".01" value="1"></label> <label class="lab"><input type="checkbox" id="pvBoost" checked> ${L('pvBoost')} <b id="pvBoostInfo"></b></label></div>
   <div class="row"><span class="lab">${L('trim')}</span> ${L('trimStart')} <input id="pvS" type="number" step=".1" min="0" class="num"> ${L('trimEnd')} <input id="pvE" type="number" step=".1" min="0" class="num"> <button class="btn" id="pvTrimReset">${L('trimReset')}</button></div>
   <h2>${L('qcTitle')}</h2><div id="pvQC" class="qc"></div>
   <div class="row"><button class="btn" id="pvBack">${L('backMixer')}</button><button class="btn rec" id="pvAgain">● ${L('recAgain')}</button><button class="btn on" id="pvExport">${L('exportBtn')}</button></div></div>`;
@@ -1984,7 +1993,7 @@ function studioInit(){
   $$('#pvTabs button').forEach(b=>b.onclick=()=>PV.select(b.dataset.k));
   $('#pvPlay').onclick=()=>{if(E.ctx.state!=='running')E.ctx.resume();PV.play();};$('#pvPause').onclick=()=>PV.pause();$('#pvStop').onclick=()=>PV.stop();
   $('#pvRestart').onclick=()=>PV.seek(PV.trim[0]);$('#pvRew').onclick=()=>PV.seek(PV.curPos()-5);$('#pvFf').onclick=()=>PV.seek(PV.curPos()+5);
-  $('#pvVol').oninput=e=>E.previewGain.gain.value=+e.target.value;
+  $('#pvVol').oninput=()=>PV.setGain();$('#pvBoost').onchange=()=>PV.setGain();
   const wave=$('#pvWave');let dragH=null;
   const tAt=e=>{const r=wave.getBoundingClientRect();return clamp((e.clientX-r.left)/r.width,0,1)*PV.data().duration;};
   wave.onpointerdown=e=>{wave.setPointerCapture(e.pointerId);const t0=tAt(e),px=7/wave.getBoundingClientRect().width*PV.data().duration;dragH=Math.abs(t0-PV.trim[0])<px?0:Math.abs(t0-PV.trim[1])<px?1:-1;if(dragH<0)PV.seek(t0);};
@@ -2210,7 +2219,8 @@ async function boot(){
   try{await engineStart();playerInit();await libInit();$('#splash').hidden=true;}catch(e){console.error(e);toast(String(e),'err');}
  };
  if(!window.isSecureContext)$('#secWarn').hidden=false;
- document.addEventListener('inputstatus',e=>{$('#micMsg').textContent=e.detail.msg||'';});
+ const banner=()=>{const b=$('#micBanner'),live=E.streams&&E.streams.ch1,started=E.started,m=(INPUT_STATUS.ch1&&INPUT_STATUS.ch1.msg)||(!window.isSecureContext?t('micNoApi'):'');b.hidden=!(started&&S.ch1.on&&!live);b.textContent='⚠ '+t('bannerMic')+(m?' — '+m:'');};
+ document.addEventListener('inputstatus',e=>{$('#micMsg').textContent=e.detail.msg||'';banner();});setInterval(banner,1000);
  window.addEventListener('beforeunload',saveState);
 }
 document.addEventListener('DOMContentLoaded',boot);
